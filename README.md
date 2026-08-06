@@ -58,7 +58,7 @@ OPTIONS (SET filename 'D:/DataProjects/cafe_sales.csv');
 
 ## Cleaning the data
 
-### 1. Double check transaction ID errors
+### 1. raw_transaction_id
 
 ```sql
 SELECT raw_transaction_id,
@@ -69,7 +69,90 @@ HAVING COUNT(raw_transaction_id) <> 1;
 ```
 
 OUT:
-> | raw_transaction_id | count |
-> | ------------------ | ----- |
-> |                    |       |
+| raw_transaction_id | count |
+| :----------------: | :---: |
+| *(no duplicate records found)* | — |
+
+NOTE:
+> No issues found
+
+### 2. raw_item_name
+
+Checking for Errors:
+
+```sql
+SELECT DISTINCT 
+    raw_item_name,
+    raw_unit_price
+FROM cafe.raw_sales
+ORDER BY raw_item_name;
+```
+
+OUT:
+
+| raw_item_name | raw_unit_price |
+|---------------|----------------|
+| "Cake"        | "3"            |
+| "Cake"        |                |
+| "Cake"        | "ERROR"        |
+| "Cake"        | "UNKNOWN"      |
+| "Coffee"      |                |
+| "Coffee"      | "2"            |
+| "Coffee"      | "UNKNOWN"      |
+| "Coffee"      | "ERROR"        |
+
+NOTE:
+> Lots of errors to fix. Checking to see if some entries are salvageable. Realistically, one would cross-check the price changes throughout the timeline but for this particular project, the data host has disclosed that the prices are consistent throughout. Although, it never hurts to double check for inconsistencies.
+
+```sql
+SELECT 
+    raw_item_name,
+    COUNT(DISTINCT raw_unit_price) AS distinct_price_count
+FROM cafe.raw_sales
+WHERE raw_unit_price ~ '^[0-9\.\,\$]+$'
+  AND raw_item_name IS NOT NULL
+  AND raw_item_name NOT IN ('UNKNOWN', 'ERROR')
+GROUP BY raw_item_name
+HAVING COUNT(DISTINCT raw_unit_price) > 1
+ORDER BY distinct_price_count DESC;
+```
+
+OUT:
+| raw_item_name | distinct_price_count |
+| :-----------: | :------------------: |
+| *(no duplicate records found)* | — |
+
+NOTE: Since no items have 2 difference amounts (outside of errors, nulls, and unknowns), it's safe to assume that prices corresponding with the items are their actual prices.
+
+```sql
+SELECT DISTINCT 
+    raw_item_name,
+    raw_unit_price
+FROM cafe.raw_sales
+WHERE raw_unit_price ~ '^[0-9\.\,\$]+$'
+  AND raw_item_name IS NOT NULL
+  AND raw_item_name != 'UNKNOWN'
+  AND raw_item_name != 'ERROR'
+ORDER BY raw_unit_price;
+```
+
+OUT:
+
+| raw_item_name | raw_unit_price |
+|---------------|----------------|
+| "Cookie"      | "1"            |
+| "Tea"         | "1.5"          |
+| "Coffee"      | "2"            |
+| "Juice"       | "3"            |
+| "Cake"        | "3"            |
+| "Sandwich"    | "4"            |
+| "Smoothie"    | "4"            |
+| "Salad"       | "5"            |
+
+NOTE:
+Now all of the Cookies, Tea, Coffee, and Salad are easily identifiable due to their prices; we will be replacing those with the same price their corresponding item names. However, for Coffee and Cake, they have the same price, as well as for Sandwich and Smoothie. With these 4 items, we will be labelling them as 'Coffee/Cake' and 'Sandwich/Smoothie' to avoid data inaccuracies.
+
+### 3. raw_unit_qty, raw_unit_price, raw_total_amount (SWAP WITH 2.)
+
+With a short look on the data, one can see that there are instances wherein only one of the three values are missing. For these cases, we can simply compute for their values using the other two values:
 
