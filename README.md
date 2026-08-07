@@ -18,16 +18,14 @@ Create a public directory and move your raw CSV dataset into place:
 Open the **Query Tool** on `cafe_db` and execute the setup script:
 
 ```sql
--- 1. Create dedicated schema
-CREATE SCHEMA IF NOT EXISTS cafe;
+CREATE SCHEMA IF NOT EXISTS cafe; -- Create dedicated schema
 
--- 2. Enable Foreign Data Wrapper extension & server
-CREATE EXTENSION IF NOT EXISTS file_fdw;
+CREATE EXTENSION IF NOT EXISTS file_fdw; -- Enable Foreign Data Wrapper extension & server
 
 CREATE SERVER IF NOT EXISTS csv_server 
 FOREIGN DATA WRAPPER file_fdw;
 
--- 3. Create raw foreign table mapping (NOTE: all columns imported as TEXT, cols renamed for shorthand)
+-- Create raw foreign table mapping (NOTE: all columns imported as TEXT to avoid errors and make data cleaning more seamless, columns are renamed for clarity and shorthand purposes)
 CREATE FOREIGN TABLE cafe.raw_sales (
     raw_transaction_id   TEXT,
     raw_item_name        TEXT,  -- Renamed from 'item'
@@ -236,13 +234,13 @@ Now all of the Cookies, Tea, Coffee, and Salad are easily identifiable due to th
 
 ### 5. Compilation
 
-Initially, I have splitted both step 2 and step 3 to have their own CTEs but later realized that they don't need to be. Since the initial plan would use more resources, I opted to only use a single CTE. Below is the final compiled result:
+Initially, I have splitted both step 2 and step 3 to have their own CTEs and JOIN them together with the raw data but later realized that they don't need to be. Since the initial plan would use more resources, I opted to only use a single CTE to forgo the need for a JOIN in the first place. Below is the final compiled result:
 
 ```sql
 WITH clean_values AS (
     SELECT 
-        raw_transaction_id,
-        raw_item_name,
+        raw_transaction_id, -- Serves as key to the database
+        raw_item_name, -- added to avoid unnecessary JOINs
         
         -- 1. Quantity: Keep valid integer OR calculate from total/price
         CASE
@@ -276,7 +274,7 @@ WITH clean_values AS (
             ELSE NULL
         END AS clean_total_amount,
 
-        -- 4. Text Dimensions: Standardize empty/error strings to NULL
+        -- 4. Text Dimensions: Standardize empty, error, and unknown strings to NULL
         CASE 
             WHEN UPPER(TRIM(raw_payment_type)) IN ('ERROR', 'UNKNOWN', '') THEN NULL 
             ELSE raw_payment_type 
@@ -291,35 +289,30 @@ WITH clean_values AS (
             WHEN UPPER(TRIM(raw_sale_date)) IN ('ERROR', 'UNKNOWN', '') THEN NULL 
             ELSE raw_sale_date 
         END AS clean_sale_date
-
     FROM cafe.raw_sales
 )
 
 SELECT 
-    raw_transaction_id AS transaction_id,
-
-    -- Item Name Inference
-    CASE
-        WHEN raw_item_name IN ('Cookie', 'Tea', 'Coffee', 'Juice', 'Cake', 'Sandwich', 'Smoothie', 'Salad') 
-            THEN raw_item_name
-        WHEN COALESCE(raw_item_name, '') IN ('', 'ERROR', 'UNKNOWN') THEN
-            CASE clean_unit_price
-                WHEN 1.00 THEN 'Cookie'
-                WHEN 1.50 THEN 'Tea'
-                WHEN 2.00 THEN 'Coffee'
-                WHEN 5.00 THEN 'Salad'
-                ELSE NULL -- Leaves ambiguous $3/$4 prices as NULL rather than bad strings
-            END
-        ELSE NULL
-    END AS item_name,
-
-    clean_item_qty AS item_qty,
-    clean_unit_price AS unit_price,
-    clean_total_amount AS total_amount,
-    clean_payment_type AS payment_type,
-    clean_store_location AS store_location,
-    TO_DATE(clean_sale_date, 'FMMM-FMDD-YYYY') AS sale_date  -- Safe Date Cast
-
+	raw_transaction_id AS transaction_id,
+	CASE -- Item Name; not done through CTE as needed the unit_price
+		WHEN raw_item_name IN ('Cookie', 'Tea', 'Coffee', 'Juice', 'Cake', 'Sandwich', 'Smoothie', 'Salad') 
+			THEN raw_item_name
+		WHEN COALESCE(raw_item_name, '') IN ('', 'ERROR', 'UNKNOWN') THEN
+			CASE clean_unit_price
+				WHEN 1.00 THEN 'Cookie'
+				WHEN 1.50 THEN 'Tea'
+				WHEN 2.00 THEN 'Coffee'
+				WHEN 5.00 THEN 'Salad'
+				ELSE NULL -- Leaves ambiguous $3/$4 prices as NULL rather than bad strings
+			END
+		ELSE NULL
+	END AS item_name,
+	clean_item_qty AS item_qty,
+	clean_unit_price AS unit_price,
+	clean_total_amount AS total_amount,
+	clean_payment_type AS payment_type,
+	clean_store_location AS store_location,
+	TO_DATE(clean_sale_date, 'FMMM-FMDD-YYYY') AS sale_date
 FROM clean_values;
 ```
 
