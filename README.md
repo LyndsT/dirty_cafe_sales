@@ -78,7 +78,47 @@ NOTE:
 
 ### 2. raw_payment_type, raw_store_location, raw_sale_date
 
-For these columns, there is little to nothing that we can do regarding missing data, hence the decision to fix them together in one go. 
+For these columns, there is little to nothing that we can do regarding missing data, hence the decision to fix them together in one go.
+
+```sql
+SELECT 
+    raw_transaction_id,
+	CASE 
+	    WHEN raw_payment_type IS NULL 
+	      OR UPPER(TRIM(raw_payment_type)) IN ('ERROR', 'UNKNOWN') 
+	    THEN NULL
+	    ELSE raw_payment_type
+	END AS clean_payment_type,
+	CASE 
+	    WHEN raw_store_location IS NULL 
+	      OR UPPER(TRIM(raw_store_location)) IN ('ERROR', 'UNKNOWN') 
+	    THEN NULL
+	    ELSE raw_store_location
+	END AS clean_store_location,
+	CASE
+	    WHEN raw_sale_date IS NULL 
+	      OR UPPER(TRIM(raw_sale_date)) IN ('ERROR', 'UNKNOWN') 
+	    THEN NULL
+	    ELSE raw_sale_date
+	END AS clean_sale_date
+FROM cafe.raw_sales;
+```
+
+OUT:
+| raw_transaction_id | clean_payment_type | clean_store_location | clean_sale_date |
+|--------------------|--------------------|----------------------|-----------------|
+| "TXN_1961373"      | "Credit Card"      | "Takeaway"           | "9/8/2023"      |
+| "TXN_4977031"      | "Cash"             | "In-store"           | "5/16/2023"     |
+| "TXN_4271903"      | "Credit Card"      | "In-store"           | "7/19/2023"     |
+| "TXN_7034554"      |                    |                      | "4/27/2023"     |
+| "TXN_3160411"      | "Digital Wallet"   | "In-store"           | "6/11/2023"     |
+| "TXN_2602893"      | "Credit Card"      |                      | "3/31/2023"     |
+| "TXN_4433211"      |                    | "Takeaway"           | "10/6/2023"     |
+| "TXN_6699534"      | "Cash"             |                      | "10/28/2023"    |
+| "TXN_4717867"      |                    | "Takeaway"           | "7/28/2023"     |
+| "TXN_2064365"      |                    | "In-store"           | "12/31/2023"    |
+
+The date is still non-functional due to formatting issues, which we will fix later on. However, the rest of the data are functional as is.
 
 ### 3. raw_unit_qty, raw_unit_price, raw_total_amount
 
@@ -192,12 +232,36 @@ OUT:
 | "Salad"       | "5"            |
 
 NOTE:
-Now all of the Cookies, Tea, Coffee, and Salad are easily identifiable due to their prices; we will be replacing those with the same price their corresponding item names. However, for Coffee and Cake, they have the same price, as well as for Sandwich and Smoothie. With these 4 items, we will be labelling them as 'Coffee/Cake' and 'Sandwich/Smoothie' to avoid data inaccuracies.
+Now all of the Cookies, Tea, Coffee, and Salad are easily identifiable due to their prices; we will be replacing those with the same price their corresponding item names. However, for Coffee and Cake, they have the same price, as well as for Sandwich and Smoothie. With these items, we will be labelling them as 'Coffee/Cake' and 'Sandwich/Smoothie' to avoid data inaccuracies.
 
 ### 5. Compilation
 
 ```sql
-WITH clean_values AS(
+WITH clean_info AS(
+	SELECT 
+	    raw_transaction_id,
+		CASE 
+		    WHEN raw_payment_type IS NULL 
+		      OR UPPER(TRIM(raw_payment_type)) IN ('ERROR', 'UNKNOWN') 
+		    THEN NULL
+		    ELSE raw_payment_type
+		END AS clean_payment_type,
+		CASE 
+		    WHEN raw_store_location IS NULL 
+		      OR UPPER(TRIM(raw_store_location)) IN ('ERROR', 'UNKNOWN') 
+		    THEN NULL
+		    ELSE raw_store_location
+		END AS clean_store_location,
+		CASE
+		    WHEN raw_sale_date IS NULL 
+		      OR UPPER(TRIM(raw_sale_date)) IN ('ERROR', 'UNKNOWN') 
+		    THEN NULL
+		    ELSE raw_sale_date
+		END AS clean_sale_date
+	FROM cafe.raw_sales
+),
+
+clean_values AS(
 	SELECT 
 	    raw_transaction_id,
 		CASE
@@ -240,31 +304,58 @@ WITH clean_values AS(
 
 SELECT 
     raw.raw_transaction_id AS transaction_id,
-    raw.raw_item_name,
-    cv.clean_unit_price AS unit_price,
-CASE
-    -- 1. If the item name is already valid, keep it
-    WHEN raw.raw_item_name IN ('Cookie', 'Tea', 'Coffee', 'Juice', 'Cake', 'Sandwich', 'Smoothie', 'Salad') 
-        THEN raw.raw_item_name
-    -- 2. If item name is bad/missing, infer from text price matching
-    WHEN COALESCE(raw.raw_item_name, '') IN ('', 'ERROR', 'UNKNOWN') THEN
-        CASE raw.raw_unit_price
-            WHEN '1'     THEN 'Cookie'
-			WHEN '1.0'   THEN 'Cookie'
-            WHEN '1.5'   THEN 'Tea'
-            WHEN '1.50'  THEN 'Tea'
-            WHEN '2'     THEN 'Coffee'
-            WHEN '2.00'  THEN 'Coffee'
-            WHEN '3'     THEN 'Juice/Cake'
-            WHEN '3.00'  THEN 'Juice/Cake'
-            WHEN '4'     THEN 'Sandwich/Smoothie'
-            WHEN '4.00'  THEN 'Sandwich/Smoothie'
-            WHEN '5'     THEN 'Salad'
-            WHEN '5.00'  THEN 'Salad'
-        END
-    ELSE NULL
-END AS clean_item_name
+	CASE
+	    -- 1. If the item name is already valid, keep it
+	    WHEN raw.raw_item_name IN ('Cookie', 'Tea', 'Coffee', 'Juice', 'Cake', 'Sandwich', 'Smoothie', 'Salad') 
+	        THEN raw.raw_item_name
+	    -- 2. If item name is bad/missing, infer from text price matching
+	    WHEN COALESCE(raw.raw_item_name, '') IN ('', 'ERROR', 'UNKNOWN') THEN
+	        CASE raw.raw_unit_price
+	            WHEN '1'     THEN 'Cookie'
+				WHEN '1.0'   THEN 'Cookie'
+	            WHEN '1.5'   THEN 'Tea'
+	            WHEN '1.50'  THEN 'Tea'
+	            WHEN '2'     THEN 'Coffee'
+	            WHEN '2.00'  THEN 'Coffee'
+	            WHEN '3'     THEN 'Juice/Cake'
+	            WHEN '3.00'  THEN 'Juice/Cake'
+	            WHEN '4'     THEN 'Sandwich/Smoothie'
+	            WHEN '4.00'  THEN 'Sandwich/Smoothie'
+	            WHEN '5'     THEN 'Salad'
+	            WHEN '5.00'  THEN 'Salad'
+	        END
+	    ELSE NULL
+	END AS item_name,
+	cv.clean_item_qty AS item_qty,
+	cv.clean_unit_price AS unit_price,
+	cv.clean_total_amount AS total_amount,
+	ci.clean_payment_type AS payment_type,
+	ci.clean_store_location AS store_location,
+	CASE 
+        WHEN ci.clean_sale_date IS NULL 
+        THEN NULL
+        ELSE TO_DATE(raw_sale_date, 'FMMM-FMDD-YYYY')
+    END AS sale_date
 FROM cafe.raw_sales AS raw
-LEFT JOIN clean_values cv 
-       ON raw.raw_transaction_id = cv.raw_transaction_id;
+LEFT JOIN clean_values cv
+	ON raw.raw_transaction_id = cv.raw_transaction_id
+LEFT JOIN clean_info ci
+	ON raw.raw_transaction_id = ci.raw_transaction_id;
 ```
+
+OUT:
+| transaction_id | item_name  | item_qty | unit_price | total_amount | payment_type     | store_location | sale_date    |
+|----------------|------------|----------|------------|--------------|------------------|----------------|--------------|
+| "TXN_1000555"  | "Tea"      | 1        | 1.5        | 1.5          | "Credit Card"    | "In-store"     | "2023-10-19" |
+| "TXN_1001832"  | "Salad"    | 2        | 5          | 10           | "Cash"           | "Takeaway"     |              |
+| "TXN_1002457"  | "Cookie"   | 5        | 1          | 5            | "Digital Wallet" | "Takeaway"     | "2023-09-29" |
+| "TXN_1003246"  | "Juice"    | 2        | 3          | 6            | "2023-02-15"     |                |              |
+| "TXN_1004184"  | "Smoothie" | 1        | 4          | 4            | "Credit Card"    | "In-store"     | "2023-05-18" |
+| "TXN_1004563"  | "Tea"      | 5        | 1.5        | 7.5          | "Credit Card"    | "In-store"     | "2023-10-28" |
+| "TXN_1005331"  | "Coffee"   | 1        | 2          | 2            | "Digital Wallet" | "Takeaway"     | "2023-11-04" |
+| "TXN_1005377"  | "Cake"     | 5        | 3          | 15           | "Digital Wallet" | "Takeaway"     | "2023-06-03" |
+| "TXN_1005472"  | "Coffee"   | 4        | 2          | 8            | "Credit Card"    |                | "2023-04-21" |
+| "TXN_1006942"  | "Salad"    | 1        | 5          | 5            | "Credit Card"    | "In-store"     | "2023-11-30" |
+
+Note: 
+That finalizes the cleaning of the dirty_cafe_sales.csv and its conversion to having functional data. The next step would be making insights and presentation.
